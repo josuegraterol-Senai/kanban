@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
-// Em desenvolvimento: usa localhost. Em produção no Vercel: usa caminho relativo /api
-const API_BASE = import.meta.env.DEV ? 'http://localhost:3001/api' : '/api';
+// Determina a base da API dinamicamente em tempo de execução
+const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:3001/api' : '/api';
 
 export const api = axios.create({ baseURL: API_BASE });
 
