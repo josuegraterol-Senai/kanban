@@ -40,6 +40,22 @@ export default function Dashboard({ api }) {
     </div>
   </div>;
 
+  if (!data) return (
+    <div className="p-8 max-w-6xl mx-auto flex flex-col items-center justify-center mt-20 bg-red-500/10 border border-red-500/20 rounded-2xl p-10 text-center">
+      <h2 className="text-2xl font-bold text-red-500 mb-4">Erro ao carregar o Dashboard</h2>
+      <p className="text-muted-foreground mb-4">
+        O backend não retornou os dados. Isso geralmente acontece porque o <strong>Firestore exige a criação de Índices (Indexes)</strong> para consultas complexas.
+      </p>
+      <p className="text-sm bg-background p-4 rounded-lg border border-border inline-block text-left">
+        <strong>Solução:</strong><br/>
+        1. Rode o projeto localmente (<code className="text-primary">npm run dev</code>)<br/>
+        2. Faça login.<br/>
+        3. Olhe o terminal onde o servidor está rodando.<br/>
+        4. O Firebase vai gerar um erro com um <strong>Link direto</strong>. Clique no link para criar o índice no Firebase Console!
+      </p>
+    </div>
+  );
+
   return (
     <div className="p-8 max-w-6xl mx-auto relative pb-24">
       <header className="mb-10">
