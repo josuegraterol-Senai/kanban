@@ -4,9 +4,31 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function Tasks({ api }) {
-  const [tasks, setTasks] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [tasks, setTasks] = useState(() => {
+    try {
+      const cached = localStorage.getItem('tasksCache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [categories, setCategories] = useState(() => {
+    try {
+      const cached = localStorage.getItem('categoriesCache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [loading, setLoading] = useState(() => {
+    try {
+      return !localStorage.getItem('tasksCache');
+    } catch {
+      return true;
+    }
+  });
   
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
@@ -19,12 +41,36 @@ export default function Tasks({ api }) {
 
   const [draggingTask, setDraggingTask] = useState(null);
 
+  // Sincroniza tasks com localStorage sempre que mudar
+  useEffect(() => {
+    if (tasks.length > 0 || localStorage.getItem('tasksCache')) {
+      try {
+        localStorage.setItem('tasksCache', JSON.stringify(tasks));
+      } catch (err) {
+        console.error('Erro ao salvar tasksCache', err);
+      }
+    }
+  }, [tasks]);
+
+  // Sincroniza categories com localStorage sempre que mudar
+  useEffect(() => {
+    if (categories.length > 0 || localStorage.getItem('categoriesCache')) {
+      try {
+        localStorage.setItem('categoriesCache', JSON.stringify(categories));
+      } catch (err) {
+        console.error('Erro ao salvar categoriesCache', err);
+      }
+    }
+  }, [categories]);
+
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-    setLoading(true);
+    if (tasks.length === 0 && !localStorage.getItem('tasksCache')) {
+      setLoading(true);
+    }
     try {
       const [tasksRes, catsRes] = await Promise.all([
         api.get('/tasks'),
@@ -43,23 +89,37 @@ export default function Tasks({ api }) {
   };
 
   const updateTaskStatus = async (task, newStatus) => {
+    const previousStatus = task.status;
+    // Atualização otimista imediata na UI
+    setTasks(prevTasks => prevTasks.map(t => t.id === task.id ? { ...t, status: newStatus } : t));
+    
     try {
       const res = await api.put(`/tasks/${task.id}`, { ...task, status: newStatus });
-      setTasks(tasks.map(t => t.id === task.id ? res.data : t));
+      setTasks(prevTasks => prevTasks.map(t => t.id === task.id ? res.data : t));
     } catch (err) {
       console.error(err);
+      // Rollback em caso de falha
+      setTasks(prevTasks => prevTasks.map(t => t.id === task.id ? { ...t, status: previousStatus } : t));
     }
   };
 
   const confirmDelete = async () => {
     if (!taskToDelete) return;
+    const taskId = taskToDelete;
+    const taskBackup = tasks.find(t => t.id === taskId);
+    
+    // Atualização otimista
+    setTasks(prevTasks => prevTasks.filter(t => t.id !== taskId));
+    setTaskToDelete(null);
+
     try {
-      await api.delete(`/tasks/${taskToDelete}`);
-      setTasks(tasks.filter(t => t.id !== taskToDelete));
-      setTaskToDelete(null);
+      await api.delete(`/tasks/${taskId}`);
     } catch (err) {
       console.error(err);
       setError('Erro ao excluir tarefa.');
+      if (taskBackup) {
+        setTasks(prevTasks => [taskBackup, ...prevTasks]);
+      }
     }
   };
 
@@ -97,16 +157,38 @@ export default function Tasks({ api }) {
 
     try {
       if (editingTask) {
+        const taskBackup = tasks.find(t => t.id === editingTask);
+        const optimisticUpdatedTask = { 
+          ...taskBackup, 
+          ...formData, 
+          category: categories.find(c => c.id === formData.categoryId) || taskBackup?.category 
+        };
+        
+        setTasks(prevTasks => prevTasks.map(t => t.id === editingTask ? optimisticUpdatedTask : t));
+        closeModal();
+
         const res = await api.put(`/tasks/${editingTask}`, formData);
-        setTasks(tasks.map(t => t.id === editingTask ? res.data : t));
+        setTasks(prevTasks => prevTasks.map(t => t.id === editingTask ? res.data : t));
       } else {
+        const tempId = 'temp-' + Date.now();
+        const optimisticNewTask = {
+          id: tempId,
+          ...formData,
+          category: categories.find(c => c.id === formData.categoryId),
+          dueDate: formData.dueDate || null,
+          createdAt: new Date().toISOString()
+        };
+
+        setTasks(prevTasks => [optimisticNewTask, ...prevTasks]);
+        closeModal();
+
         const res = await api.post('/tasks', formData);
-        setTasks([res.data, ...tasks]);
+        setTasks(prevTasks => prevTasks.map(t => t.id === tempId ? res.data : t));
       }
-      closeModal();
     } catch (err) {
       console.error(err);
       setError('Erro ao salvar tarefa.');
+      loadData();
     }
   };
 

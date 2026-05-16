@@ -6,6 +6,8 @@ import Dashboard from './pages/Dashboard';
 import Tasks from './pages/Tasks';
 import Login from './pages/Login';
 import Profile from './pages/Profile';
+import Categories from './pages/Categories';
+import SettingsPage from './pages/Settings';
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -84,8 +86,8 @@ const AppLayout = () => {
           <Route path="/" element={<Dashboard api={api} />} />
           <Route path="/tasks" element={<Tasks api={api} />} />
           <Route path="/profile" element={<Profile />} />
-          <Route path="/categories" element={<div className="p-8"><h1>Categorias em breve...</h1></div>} />
-          <Route path="/settings" element={<div className="p-8"><h1>Configurações em breve...</h1></div>} />
+          <Route path="/categories" element={<Categories api={api} />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>

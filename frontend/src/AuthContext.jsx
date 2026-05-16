@@ -22,6 +22,30 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  
+  // Inicializa o cache do dashboard a partir do localStorage
+  const [dashboardCache, setDashboardCacheState] = useState(() => {
+    try {
+      const cached = localStorage.getItem('dashboardCache');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Função wrapper para atualizar o estado e o localStorage
+  const setDashboardCache = (data) => {
+    setDashboardCacheState(data);
+    if (data) {
+      try {
+        localStorage.setItem('dashboardCache', JSON.stringify(data));
+      } catch (err) {
+        console.error('Erro ao salvar cache do dashboard no localStorage', err);
+      }
+    } else {
+      localStorage.removeItem('dashboardCache');
+    }
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -52,13 +76,23 @@ export const AuthProvider = ({ children }) => {
     setUser(res.data.user);
   };
 
+  const updateSettings = async (settingsData) => {
+    const res = await api.put('/auth/settings', settingsData);
+    setUser(res.data);
+    return res.data;
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('dashboardCache');
+    localStorage.removeItem('tasksCache');
+    localStorage.removeItem('categoriesCache');
     setUser(null);
+    setDashboardCacheState(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, register, logout, updateSettings, loading, dashboardCache, setDashboardCache }}>
       {children}
     </AuthContext.Provider>
   );

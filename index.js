@@ -106,47 +106,81 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
     const doc = await db.collection('users').doc(req.userId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Usuário não encontrado' });
     const user = doc.data();
-    res.json({ id: doc.id, name: user.name, email: user.email, avatarUrl: user.avatarUrl });
+    res.json({ id: doc.id, name: user.name, email: user.email, avatarUrl: user.avatarUrl, theme: user.theme || 'dark', notifications: user.notifications ?? true });
   } catch {
     res.status(500).json({ error: 'Erro ao buscar usuário' });
+  }
+});
+
+app.put('/api/auth/settings', authMiddleware, async (req, res) => {
+  const { name, avatarUrl, theme, notifications } = req.body;
+  try {
+    const userRef = db.collection('users').doc(req.userId);
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (avatarUrl !== undefined) updates.avatarUrl = avatarUrl;
+    if (theme !== undefined) updates.theme = theme;
+    if (notifications !== undefined) updates.notifications = notifications;
+    
+    await userRef.update(updates);
+    const doc = await userRef.get();
+    const user = doc.data();
+    res.json({ id: doc.id, name: user.name, email: user.email, avatarUrl: user.avatarUrl, theme: user.theme || 'dark', notifications: user.notifications ?? true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao atualizar configurações' });
   }
 });
 
 // ─── Dashboard ────────────────────────────────────────────────
 app.get('/api/dashboard', authMiddleware, async (req, res) => {
   try {
-    const tasksRef = db.collection('tasks').where('userId', '==', req.userId);
-    const allSnap = await tasksRef.get();
-    const totalTasks = allSnap.size;
+    const tasksSnap = await db.collection('tasks').where('userId', '==', req.userId).get();
+    const allTasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const totalTasks = allTasks.length;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayTs = admin.firestore.Timestamp.fromDate(today);
-    const nowTs = admin.firestore.Timestamp.now();
+    const now = new Date();
 
-    const completedTodaySnap = await tasksRef
-      .where('status', '==', 'DONE')
-      .where('updatedAt', '>=', todayTs)
-      .get();
-    const completedToday = completedTodaySnap.size;
+    const completedToday = allTasks.filter(t => {
+      if (t.status !== 'DONE') return false;
+      const updatedDate = t.updatedAt?.toDate ? t.updatedAt.toDate() : new Date(t.updatedAt || 0);
+      return updatedDate >= today;
+    }).length;
 
-    const overdueSnap = await tasksRef.where('dueDate', '<', nowTs).get();
-    const overdue = overdueSnap.docs.filter(d => ['TODO', 'DOING'].includes(d.data().status)).length;
+    const overdue = allTasks.filter(t => {
+      if (!['TODO', 'DOING'].includes(t.status)) return false;
+      if (!t.dueDate) return false;
+      const dueDate = t.dueDate?.toDate ? t.dueDate.toDate() : new Date(t.dueDate);
+      return dueDate < now;
+    }).length;
 
-    const upcomingSnap = await tasksRef
-      .where('dueDate', '>=', nowTs)
-      .orderBy('dueDate', 'asc')
-      .limit(5)
-      .get();
+    // Upcoming tasks (dueDate >= now, ordered by dueDate asc, limit 5)
+    const upcomingCandidates = allTasks.filter(t => {
+      if (!t.dueDate) return false;
+      const dueDate = t.dueDate?.toDate ? t.dueDate.toDate() : new Date(t.dueDate);
+      return dueDate >= now;
+    });
+    upcomingCandidates.sort((a, b) => {
+      const dateA = a.dueDate?.toDate ? a.dueDate.toDate() : new Date(a.dueDate);
+      const dateB = b.dueDate?.toDate ? b.dueDate.toDate() : new Date(b.dueDate);
+      return dateA - dateB;
+    });
+    const upcomingSlice = upcomingCandidates.slice(0, 5);
 
-    const catIds = [...new Set(upcomingSnap.docs.map(d => d.data().categoryId).filter(Boolean))];
+    const catIds = [...new Set(upcomingSlice.map(t => t.categoryId).filter(Boolean))];
     const catMap = {};
     for (const cid of catIds) {
       const cDoc = await db.collection('categories').doc(cid).get();
       if (cDoc.exists) catMap[cid] = { id: cid, ...cDoc.data() };
     }
-    const upcomingTasks = upcomingSnap.docs.map(d => ({
-      id: d.id, ...d.data(), category: catMap[d.data().categoryId] || null
+    const upcomingTasks = upcomingSlice.map(t => ({
+      ...t,
+      dueDate: t.dueDate?.toDate ? t.dueDate.toDate().toISOString() : t.dueDate,
+      createdAt: t.createdAt?.toDate ? t.createdAt.toDate().toISOString() : t.createdAt,
+      updatedAt: t.updatedAt?.toDate ? t.updatedAt.toDate().toISOString() : t.updatedAt,
+      category: catMap[t.categoryId] || null
     }));
 
     // Last 7 days
@@ -158,12 +192,13 @@ app.get('/api/dashboard', authMiddleware, async (req, res) => {
       const nextDate = new Date(date);
       nextDate.setDate(date.getDate() + 1);
 
-      const snap = await tasksRef
-        .where('status', '==', 'DONE')
-        .where('updatedAt', '>=', admin.firestore.Timestamp.fromDate(date))
-        .where('updatedAt', '<', admin.firestore.Timestamp.fromDate(nextDate))
-        .get();
-      last7Days.push({ date: date.toISOString(), count: snap.size });
+      const count = allTasks.filter(t => {
+        if (t.status !== 'DONE') return false;
+        const updatedDate = t.updatedAt?.toDate ? t.updatedAt.toDate() : new Date(t.updatedAt || 0);
+        return updatedDate >= date && updatedDate < nextDate;
+      }).length;
+
+      last7Days.push({ date: date.toISOString(), count });
     }
 
     res.json({ total: totalTasks, completedToday, overdue, upcomingTasks, last7Days });
@@ -176,14 +211,27 @@ app.get('/api/dashboard', authMiddleware, async (req, res) => {
 // ─── Tasks ────────────────────────────────────────────────────
 app.get('/api/tasks', authMiddleware, async (req, res) => {
   try {
-    const snap = await db.collection('tasks').where('userId', '==', req.userId).orderBy('createdAt', 'desc').get();
-    const catIds = [...new Set(snap.docs.map(d => d.data().categoryId).filter(Boolean))];
+    const snap = await db.collection('tasks').where('userId', '==', req.userId).get();
+    const tasksData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    tasksData.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+
+    const catIds = [...new Set(tasksData.map(t => t.categoryId).filter(Boolean))];
     const catMap = {};
     for (const cid of catIds) {
       const cDoc = await db.collection('categories').doc(cid).get();
       if (cDoc.exists) catMap[cid] = { id: cid, ...cDoc.data() };
     }
-    const tasks = snap.docs.map(d => ({ id: d.id, ...d.data(), category: catMap[d.data().categoryId] || null }));
+    const tasks = tasksData.map(t => ({
+      ...t,
+      dueDate: t.dueDate?.toDate ? t.dueDate.toDate().toISOString() : t.dueDate,
+      createdAt: t.createdAt?.toDate ? t.createdAt.toDate().toISOString() : t.createdAt,
+      updatedAt: t.updatedAt?.toDate ? t.updatedAt.toDate().toISOString() : t.updatedAt,
+      category: catMap[t.categoryId] || null
+    }));
     res.json(tasks);
   } catch (err) {
     console.error(err);
@@ -210,7 +258,12 @@ app.post('/api/tasks', authMiddleware, async (req, res) => {
     await taskRef.set(taskData);
     const catDoc = categoryId ? await db.collection('categories').doc(categoryId).get() : null;
     const category = catDoc && catDoc.exists ? { id: catDoc.id, ...catDoc.data() } : null;
-    res.json({ id: taskRef.id, ...taskData, category });
+    res.json({ 
+      id: taskRef.id, 
+      ...taskData, 
+      dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+      category 
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro ao criar tarefa' });
@@ -219,7 +272,7 @@ app.post('/api/tasks', authMiddleware, async (req, res) => {
 
 app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { title, description, dueDate, priority, status, categoryId } = req.body;
+  const { title, description, dueDate, priority, status, categoryId, tags } = req.body;
   try {
     const taskRef = db.collection('tasks').doc(id);
     const taskDoc = await taskRef.get();
@@ -231,12 +284,19 @@ app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
       dueDate: dueDate ? admin.firestore.Timestamp.fromDate(new Date(dueDate)) : null,
       priority, status,
       categoryId: categoryId || null,
+      tags: tags || [],
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     await taskRef.update(updates);
     const catDoc = categoryId ? await db.collection('categories').doc(categoryId).get() : null;
     const category = catDoc && catDoc.exists ? { id: catDoc.id, ...catDoc.data() } : null;
-    res.json({ id, ...taskDoc.data(), ...updates, category });
+    res.json({ 
+      id, 
+      ...taskDoc.data(), 
+      ...updates, 
+      dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+      category 
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro ao atualizar tarefa' });
@@ -265,6 +325,66 @@ app.get('/api/categories', authMiddleware, async (req, res) => {
     res.json(categories);
   } catch {
     res.status(500).json({ error: 'Erro ao buscar categorias' });
+  }
+});
+
+app.post('/api/categories', authMiddleware, async (req, res) => {
+  const { name, color } = req.body;
+  if (!name) return res.status(400).json({ error: 'Nome da categoria é obrigatório' });
+  try {
+    const id = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '-');
+    const catRef = db.collection('categories').doc(id);
+    const doc = await catRef.get();
+    if (doc.exists) return res.status(400).json({ error: 'Categoria já existe' });
+
+    const newCat = { name, color: color || '#3B82F6' };
+    await catRef.set(newCat);
+    res.json({ id, ...newCat });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao criar categoria' });
+  }
+});
+
+app.put('/api/categories/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { name, color } = req.body;
+  try {
+    const catRef = db.collection('categories').doc(id);
+    const doc = await catRef.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Categoria não encontrada' });
+
+    const updates = { name, color };
+    await catRef.update(updates);
+    res.json({ id, ...updates });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao atualizar categoria' });
+  }
+});
+
+app.delete('/api/categories/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const catRef = db.collection('categories').doc(id);
+    const doc = await catRef.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Categoria não encontrada' });
+
+    // Migrar tarefas desta categoria para 'pessoal'
+    const tasksSnap = await db.collection('tasks').where('categoryId', '==', id).get();
+    if (!tasksSnap.empty) {
+      const batch = db.batch();
+      tasksSnap.docs.forEach(taskDoc => {
+        batch.update(taskDoc.ref, { categoryId: 'pessoal', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+      });
+      await batch.commit();
+    }
+
+    await catRef.delete();
+    res.json({ success: true, message: 'Categoria excluída e tarefas migradas para Pessoal' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao excluir categoria' });
   }
 });
 

@@ -6,9 +6,9 @@ import { ptBR } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
 
 export default function Dashboard({ api }) {
-  const { user } = useAuth();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const { user, dashboardCache, setDashboardCache } = useAuth();
+  const [data, setData] = useState(dashboardCache);
+  const [loading, setLoading] = useState(!dashboardCache);
 
   useEffect(() => {
     loadDashboard();
@@ -18,6 +18,7 @@ export default function Dashboard({ api }) {
     try {
       const res = await api.get('/dashboard');
       setData(res.data);
+      setDashboardCache(res.data);
     } catch (err) {
       console.error(err);
     } finally {
