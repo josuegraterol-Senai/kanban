@@ -1,8 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const admin = require('firebase-admin');
+const path = require('path');
 
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
@@ -40,19 +42,23 @@ const authMiddleware = (req, res, next) => {
 
 // ─── Seed Categories ──────────────────────────────────────────
 const seedCategories = async () => {
-  const snapshot = await db.collection('categories').get();
-  if (snapshot.empty) {
-    const batch = db.batch();
-    const defaults = [
-      { id: 'trabalho',  name: 'Trabalho',  color: '#EF4444' },
-      { id: 'estudos',   name: 'Estudos',   color: '#3B82F6' },
-      { id: 'pessoal',   name: 'Pessoal',   color: '#10B981' },
-      { id: 'casa',      name: 'Casa',      color: '#F59E0B' },
-    ];
-    for (const cat of defaults) {
-      batch.set(db.collection('categories').doc(cat.id), { name: cat.name, color: cat.color });
+  try {
+    const snapshot = await db.collection('categories').get();
+    if (snapshot.empty) {
+      const batch = db.batch();
+      const defaults = [
+        { id: 'trabalho',  name: 'Trabalho',  color: '#EF4444' },
+        { id: 'estudos',   name: 'Estudos',   color: '#3B82F6' },
+        { id: 'pessoal',   name: 'Pessoal',   color: '#10B981' },
+        { id: 'casa',      name: 'Casa',      color: '#F59E0B' },
+      ];
+      for (const cat of defaults) {
+        batch.set(db.collection('categories').doc(cat.id), { name: cat.name, color: cat.color });
+      }
+      await batch.commit();
     }
-    await batch.commit();
+  } catch (err) {
+    console.warn("⚠️ Não foi possível semear categorias. O banco Firestore foi criado no console? Erro:", err.message);
   }
 };
 seedCategories();
@@ -274,5 +280,18 @@ app.get('/api/tags', authMiddleware, async (req, res) => {
   }
 });
 
-// Export for Vercel serverless
+// ─── Frontend App (Static) ────────────────────────────────────
+app.use(express.static(path.join(__dirname, 'frontend/dist')));
+
+app.use((req, res) => {
+  res.sendFile(path.join(__dirname, 'frontend/dist', 'index.html'));
+});
+
+// ─── Start Server ─────────────────────────────────────────────
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+});
+
+// Export for Vercel serverless (if needed)
 module.exports = app;
