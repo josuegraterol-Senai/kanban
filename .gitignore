@@ -32,4 +32,10 @@ lerna-debug.log*
 
 # Project specific
 backend/generated/prisma
+backend/dev.db
+backend/uploads/
 .agent/
+
+# Firebase service account keys
+*-service-account*.json
+*serviceAccount*.json

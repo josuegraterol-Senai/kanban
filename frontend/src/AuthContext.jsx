@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
-export const api = axios.create({ baseURL: 'http://localhost:3001/api' });
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : 'http://localhost:3001/api';
+
+export const api = axios.create({ baseURL: API_BASE });
 
 // Add token to requests
 api.interceptors.request.use((config) => {
